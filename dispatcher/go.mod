@@ -1,6 +1,6 @@
 module dispatcher
 
-go 1.24.4
+go 1.26
 
 require comun v0.0.0
 

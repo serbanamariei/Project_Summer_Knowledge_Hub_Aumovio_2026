@@ -107,7 +107,9 @@ func handleProceseaza(w http.ResponseWriter, r *http.Request) {
 
 	listaLinkuri := ExtrageLinkuri(htmlBrut, cerere.URL)
 
-	for i := 0; i < len(listaLinkuri) && i < 10; i++ {
+	limita := min(len(listaLinkuri), 10)
+
+	for i := 0; i < limita; i++ {
 		db.Exec(`INSERT INTO rezultate_extragere (link_sursa, link_gasit) VALUES ($1, $2)`, cerere.URL, listaLinkuri[i])
 	}
 
