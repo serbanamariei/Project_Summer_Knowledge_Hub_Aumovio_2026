@@ -22,5 +22,13 @@ CREATE TABLE IF NOT EXISTS rezultate_extragere (
     creat_la TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS istoric_utilizatori (
+    id SERIAL PRIMARY KEY,
+    chat_id BIGINT,
+    comanda TEXT,
+    tip_comanda VARCHAR(50),
+    data_adaugare TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO proxyuri(tip, adresa, nume, parola)
 VALUES ('socks5', 'vpn-proxy:1080', 'admin', 'parola1109');

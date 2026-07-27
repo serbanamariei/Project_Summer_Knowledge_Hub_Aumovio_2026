@@ -6,6 +6,7 @@ require (
 	comun v0.0.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/kkdai/youtube/v2 v2.10.6
+	github.com/lib/pq v1.12.3
 )
 
 require (

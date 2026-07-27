@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"comun"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,14 +17,17 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/kkdai/youtube/v2"
+	_ "github.com/lib/pq"
 )
 
 var (
 	cacheLinkuri = make(map[string][]string)
 	mutexCache   sync.RWMutex
+	dbBot        *sql.DB
 )
 
 const LinkuriPePagina = 10
+const IstoricPePagina = 5
 
 type ProcesatorStrategie interface {
 	Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Message)
@@ -42,7 +46,14 @@ type StrategieScraping struct {
 }
 
 func (s *StrategieScraping) Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	salveazaInIstoric(message.Chat.ID, message.Text, "Scraper")
 	proceseazaScraping(bot, message)
+}
+
+type StrategieIstoric struct{}
+
+func (s *StrategieIstoric) Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	trimitePaginaIstoric(bot, message.Chat.ID, 0, 0)
 }
 
 type ComandaBuilder struct {
@@ -54,6 +65,9 @@ func NewComandaBuilder(text string) *ComandaBuilder {
 }
 
 func (b *ComandaBuilder) Construieste() ProcesatorStrategie {
+	if b.text == "/istoric" {
+		return &StrategieIstoric{}
+	}
 	if strings.Contains(b.text, "youtube.com") || strings.Contains(b.text, "youtu.be") {
 		return &StrategieYouTube{URL: b.text}
 	}
@@ -61,6 +75,12 @@ func (b *ComandaBuilder) Construieste() ProcesatorStrategie {
 }
 
 func main() {
+	var err error
+	dbBot, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println("Avertisment: Nu s-a putut conecta la baza de date din bot:", err)
+	}
+
 	bot, err := tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_TOKEN"))
 	if err != nil {
 		log.Fatal(err)
@@ -89,6 +109,98 @@ func main() {
 	}
 }
 
+func salveazaInIstoric(chatID int64, comanda string, tip string) {
+	if dbBot != nil {
+		_, err := dbBot.Exec(`INSERT INTO istoric_utilizatori (chat_id, comanda, tip_comanda) VALUES ($1, $2, $3)`, chatID, comanda, tip)
+		if err != nil {
+			log.Println("Eroare la salvare istoric:", err)
+		}
+	}
+}
+
+func trimitePaginaIstoric(bot *tgbotapi.BotAPI, chatID int64, messageID int, pagina int) {
+	if dbBot == nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "Baza de date nu este disponibila"))
+		return
+	}
+
+	limit := IstoricPePagina
+	offset := pagina * limit
+
+	rows, err := dbBot.Query(`SELECT comanda, tip_comanda FROM istoric_utilizatori WHERE chat_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3`, chatID, limit+1, offset)
+	if err != nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "Eroare la preluarea istoricului"))
+		return
+	}
+	defer rows.Close()
+
+	type Inregistrare struct {
+		Cmd string
+		Tip string
+	}
+	var inregistrari []Inregistrare
+
+	for rows.Next() {
+		var r Inregistrare
+		if err := rows.Scan(&r.Cmd, &r.Tip); err == nil {
+			inregistrari = append(inregistrari, r)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Println("Eroare in timpul iterarii istoricului:", err)
+	}
+
+	areNext := len(inregistrari) > limit
+	if areNext {
+		inregistrari = inregistrari[:limit]
+	}
+
+	if len(inregistrari) == 0 && pagina == 0 {
+		bot.Send(tgbotapi.NewMessage(chatID, "Nu ai nicio actiune salvata in istoric"))
+		return
+	}
+
+	textMesaj := fmt.Sprintf("<b>Istoric: (Pagina %d):</b>\n\n", pagina+1)
+	for _, r := range inregistrari {
+		textMesaj += fmt.Sprintf("%s\n%s\n\n", r.Tip, r.Cmd)
+	}
+
+	var randButoane []tgbotapi.InlineKeyboardButton
+
+	if pagina > 0 {
+		dataBack := fmt.Sprintf("h|%d", pagina-1)
+		randButoane = append(randButoane, tgbotapi.NewInlineKeyboardButtonData("Inapoi", dataBack))
+	}
+
+	if areNext {
+		dataNext := fmt.Sprintf("h|%d", pagina+1)
+		randButoane = append(randButoane, tgbotapi.NewInlineKeyboardButtonData("Inainte", dataNext))
+	}
+
+	var msg tgbotapi.MessageConfig
+	var editMsg tgbotapi.EditMessageTextConfig
+
+	if messageID == 0 {
+		msg = tgbotapi.NewMessage(chatID, textMesaj)
+		msg.ParseMode = "HTML"
+		msg.DisableWebPagePreview = true
+		if len(randButoane) > 0 {
+			msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(randButoane...))
+		}
+		bot.Send(msg)
+	} else {
+		editMsg = tgbotapi.NewEditMessageText(chatID, messageID, textMesaj)
+		editMsg.ParseMode = "HTML"
+		editMsg.DisableWebPagePreview = true
+		if len(randButoane) > 0 {
+			markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(randButoane...))
+			editMsg.ReplyMarkup = &markup
+		}
+		bot.Send(editMsg)
+	}
+}
+
 func proceseazaRutare(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	builder := NewComandaBuilder(message.Text)
 	strategie := builder.Construieste()
@@ -100,6 +212,15 @@ func proceseazaCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery) 
 
 	if strings.HasPrefix(callback.Data, "p|") {
 		proceseazaPaginare(bot, callback)
+		return
+	}
+
+	if strings.HasPrefix(callback.Data, "h|") {
+		date := strings.Split(callback.Data, "|")
+		if len(date) == 2 {
+			pagina, _ := strconv.Atoi(date[1])
+			trimitePaginaIstoric(bot, callback.Message.Chat.ID, callback.Message.MessageID, pagina)
+		}
 		return
 	}
 
@@ -238,6 +359,13 @@ func descarcaMedia(bot *tgbotapi.BotAPI, chatID int64, msgID int, videoID string
 		bot.Send(tgbotapi.NewEditMessageText(chatID, msgID, "Eroare la citirea video ului"))
 		return
 	}
+
+	urlVideo := "https://www.youtube.com/watch?v=" + videoID
+	numeFormat := "YouTube MP4"
+	if tip == "m" {
+		numeFormat = "YouTube MP3"
+	}
+	salveazaInIstoric(chatID, urlVideo, numeFormat)
 
 	var format youtube.Format
 	formats := video.Formats.WithAudioChannels()
