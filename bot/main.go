@@ -28,6 +28,7 @@ var (
 
 const LinkuriPePagina = 10
 const IstoricPePagina = 5
+const HelpPePagina = 3
 
 type ProcesatorStrategie interface {
 	Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Message)
@@ -56,6 +57,12 @@ func (s *StrategieIstoric) Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Messa
 	trimitePaginaIstoric(bot, message.Chat.ID, 0, 0)
 }
 
+type StrategieHelp struct{}
+
+func (s *StrategieHelp) Executa(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	trimitePaginaHelp(bot, message.Chat.ID, 0, 0)
+}
+
 type ComandaBuilder struct {
 	text string
 }
@@ -65,6 +72,9 @@ func NewComandaBuilder(text string) *ComandaBuilder {
 }
 
 func (b *ComandaBuilder) Construieste() ProcesatorStrategie {
+	if b.text == "/help" || b.text == "/start" {
+		return &StrategieHelp{}
+	}
 	if b.text == "/istoric" {
 		return &StrategieIstoric{}
 	}
@@ -201,6 +211,61 @@ func trimitePaginaIstoric(bot *tgbotapi.BotAPI, chatID int64, messageID int, pag
 	}
 }
 
+func trimitePaginaHelp(bot *tgbotapi.BotAPI, chatID int64, messageID int, pagina int) {
+	functionalitati := []string{
+		"<b>/help</b> sau <b>/start</b> - Se afiseaza meniul de ajutor",
+		"<b>/istoric</b> - Se afiseaza istoricul comenzilor si al download-erilor",
+		"<b>Link YouTube</b> - Se va propune descarcarea in format MP4 sau MP3 de la un anumit video de Youtube",
+		"<b>Link Web</b> - Se vor extrage toate link-urile de pe pagina web si se vor afisa",
+	}
+
+	total := len(functionalitati)
+	start := pagina * HelpPePagina
+	end := start + HelpPePagina
+	if end > total {
+		end = total
+	}
+
+	textMesaj := fmt.Sprintf("<b>Meniu Ajutor (Pagina %d):</b>\n\n", pagina+1)
+	for i := start; i < end; i++ {
+		textMesaj += fmt.Sprintf("%d. %s\n\n", i+1, functionalitati[i])
+	}
+
+	var randButoane []tgbotapi.InlineKeyboardButton
+
+	if pagina > 0 {
+		dataBack := fmt.Sprintf("a|%d", pagina-1)
+		randButoane = append(randButoane, tgbotapi.NewInlineKeyboardButtonData("Inapoi", dataBack))
+	}
+
+	if end < total {
+		dataNext := fmt.Sprintf("a|%d", pagina+1)
+		randButoane = append(randButoane, tgbotapi.NewInlineKeyboardButtonData("Inainte", dataNext))
+	}
+
+	var msg tgbotapi.MessageConfig
+	var editMsg tgbotapi.EditMessageTextConfig
+
+	if messageID == 0 {
+		msg = tgbotapi.NewMessage(chatID, textMesaj)
+		msg.ParseMode = "HTML"
+		msg.DisableWebPagePreview = true
+		if len(randButoane) > 0 {
+			msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(randButoane...))
+		}
+		bot.Send(msg)
+	} else {
+		editMsg = tgbotapi.NewEditMessageText(chatID, messageID, textMesaj)
+		editMsg.ParseMode = "HTML"
+		editMsg.DisableWebPagePreview = true
+		if len(randButoane) > 0 {
+			markup := tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(randButoane...))
+			editMsg.ReplyMarkup = &markup
+		}
+		bot.Send(editMsg)
+	}
+}
+
 func proceseazaRutare(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	builder := NewComandaBuilder(message.Text)
 	strategie := builder.Construieste()
@@ -220,6 +285,15 @@ func proceseazaCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery) 
 		if len(date) == 2 {
 			pagina, _ := strconv.Atoi(date[1])
 			trimitePaginaIstoric(bot, callback.Message.Chat.ID, callback.Message.MessageID, pagina)
+		}
+		return
+	}
+
+	if strings.HasPrefix(callback.Data, "a|") {
+		date := strings.Split(callback.Data, "|")
+		if len(date) == 2 {
+			pagina, _ := strconv.Atoi(date[1])
+			trimitePaginaHelp(bot, callback.Message.Chat.ID, callback.Message.MessageID, pagina)
 		}
 		return
 	}
