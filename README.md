@@ -1,67 +1,67 @@
-# Sistem Distribuit - Telegram Bot (Media Downloader & Web Scraper)
+# Distributed System - Telegram Bot (Media Downloader & Web Scraper)
 
-## Ce face proiectul
+## Project Overview
 
-Acest proiect reprezinta un sistem distribuit, bazat pe microservicii, care ofera o interfata de utilizare prin intermediul unui Bot de Telegram. Sistemul permite utilizatorilor sa execute doua functionalitati majore:
-1. Descarcarea de continut media de pe YouTube, cu posibilitatea salvarii in format MP4 sau conversiei audio in MP3.
-2. Rularea unui proces de Web Scraping asincron pe un URL specificat, extragand si deduplicand link-urile dintr-o pagina web.
+This project represents a distributed, microservices-based system that provides a user interface through a Telegram Bot. The system allows users to execute two major functionalities:
+1. Downloading media content from YouTube, with options for saving in MP4 format or converting the audio to MP3.
+2. Running an asynchronous Web Scraping process on a specified URL, extracting and deduplicating links from a web page.
 
-Proiectul mentine de asemenea un istoric al actiunilor utilizatorilor in baza de date si implementeaza un mecanism avansat de rotatie a proxy-urilor pentru a asigura rezilienta crawler-ului in fata blocajelor de retea.
+The project also maintains a log of user actions in a database and implements an advanced proxy rotation mechanism to ensure crawler resilience against network blocks.
 
-## Arhitectura si Module
+## Architecture and Modules
 
-Proiectul este structurat modular, fiecare componenta ruland in propriul container Docker pentru o decuplare totala:
+The project is modularly structured, with each component running in its own Docker container for complete decoupling:
 
-* **Bot-ul (API Gateway):** Modulul de frontend care comunica cu API-ul Telegram prin webhook-uri. Gestioneaza rutarea comenzilor, paginarea meniurilor si executa operatiunile costisitoare de scriere pe disc a fisierelor media descarcate.
-* **Dispatcher-ul (Orchestrator):** Actioneaza ca un strat middleware intre Bot si Crawler. Acesta preia cererile, extrage cel mai bun proxy disponibil din cache si delegeaza sarcina de procesare. Ulterior, stocheaza rezultatele parsate in format JSONB.
-* **Crawler-ul (Worker):** Serviciul responsabil cu executia request-urilor HTTP de scraping. Foloseste tehnici de mascare (User-Agent spoofing, tunelare SOCKS5) si aplica expresii regulate pentru a parsa eficient codul sursa HTML.
-* **Baza de Date:** Un container PostgreSQL folosit pentru stocarea istoricului de actiuni, a proxy-urilor disponibile si a link-urilor extrase de pe paginile web.
-* **VPN Proxy:** Un serviciu SOCKS5 intern, utilizat pentru a masca adresa IP a aplicatiei in timpul procesului de web scraping.
+* **Bot (API Gateway):** The frontend module that communicates with the Telegram API via webhooks. It manages command routing, menu pagination, and executes resource-heavy disk-write operations for downloaded media files.
+* **Dispatcher (Orchestrator):** Acts as a middleware layer between the Bot and the Crawler. It intercepts requests, retrieves the best available proxy from the cache, and delegates the processing task. Subsequently, it stores the parsed results in JSONB format.
+* **Crawler (Worker):** The service responsible for executing HTTP scraping requests. It uses spoofing techniques (User-Agent spoofing, SOCKS5 tunneling) and applies regular expressions to efficiently parse HTML source code.
+* **Database:** A PostgreSQL container used to store action history, available proxies, and links extracted from web pages.
+* **VPN Proxy:** An internal SOCKS5 service used to mask the application's IP address during the web scraping process.
 
-## Design Pattern-uri Folosite
+## Design Patterns Used
 
 * **Strategy Pattern:**
-  - **In modulul Bot:** A fost utilizat pentru a decupla rutarea mesajelor de executia lor. Interfata `ProcesatorStrategie` permite rularea actiunilor specifice fara a folosi o retea masiva de instructiuni if/else. Odata ce decizia a fost luata, sistemul doar apeleaza metoda polimorfica `Executa()`.
-  - **In modulul Crawler:** Prin intermediul interfetei `IProxy`, codul poate executa HTTP fetch-uri folosind o conexiune directa sau mascata, fara ca logica business de web scraping sa fie constienta de implementarea de retea de dedesubt.
+  - **In the Bot module:** Used to decouple message routing from execution. The `ProcesatorStrategie` interface allows running specific actions without relying on a massive network of if/else statements. Once the decision is made, the system simply calls the polymorphic `Executa()` method.
+  - **In the Crawler module:** Through the `IProxy` interface, code can execute HTTP fetches using either a direct or masked connection, without the core web scraping business logic being aware of the underlying network implementation.
 * **Simple Factory:**
-  - In Bot, `ComandaBuilder` joaca rolul unei fabrici care analizeaza textul introdus de utilizator si returneaza instanta corecta de executie.
-  - In Crawler, metoda `CreazaProxyConcret` evalueaza setul de date primit prin retea si instantiaza la runtime tipul corect de client de retea (`SocksProxy` sau `NoProxy`).
+  - In the Bot, `ComandaBuilder` acts as a factory that analyzes user input text and returns the correct execution instance.
+  - In the Crawler, the `CreazaProxyConcret` method evaluates data received over the network and instantiates the correct network client type (`SocksProxy` or `NoProxy`) at runtime.
 * **Singleton Pattern:**
-  - Utilizat in implementarea structurii `ProxyManager` din Dispatcher. Apeland la primitiva `sync.Once`, sistemul garanteaza ca lista de proxy-uri este interogata si incarcata din baza de date in memoria RAM o singura data la pornirea serviciului, fiind ulterior accesibila global si sigur.
+  - Used in the implementation of the `ProxyManager` struct within the Dispatcher. Utilizing the `sync.Once` primitive, the system guarantees that the proxy list is queried and loaded from the database into RAM only once upon service startup, remaining globally and safely accessible afterwards.
 
-## Concepte Tehnice Cheie
+## Key Technical Concepts
 
-* **Managementul Memoriei (Stream I/O):** Pentru a preveni consumul excesiv de memorie RAM la descarcarea videoclipurilor foarte mari, datele sunt transferate direct de la interfata de retea catre memoria non-volatila folosind pachetul standard `io.Copy`. Astfel, transferul se face prin buffere de dimensiuni mici, mentinand un consum de memorie constant.
-* **Concurenta si Thread Safety:** Proiectul se foloseste de Goroutines pentru a procesa mesajele venite de la mai multi utilizatori simultan. Pentru a preveni fenomenele de Race Condition la accesarea resurselor globale partajate, starea a fost protejata cu `sync.Mutex` (pentru listele de proxy) si `sync.RWMutex` (pentru cache-ul de link-uri paginate).
-* **Inter-Process Communication (OS Child Processes):** Conversia fisierelor video (.mp4) in fisiere audio (.mp3) se face delegand operatiunea catre un proces extern din sistemul de operare gazda (FFmpeg), instantiat prin pachetul `os/exec`.
-* **Stateless UI:** Paginarea in meniul Telegram se face fara mentinerea starii pe server. Informatia de context (ID-ul cautarii si indexul paginii) este serializata si incapsulata in string-ul butoanelor de tip Callback (`p|ID|Pagina`), asigurand un consum zero de memorie intre interogarile utilizatorilor.
+* **Memory Management (Stream I/O):** To prevent excessive RAM consumption when downloading very large videos, data is streamed directly from the network interface to non-volatile memory using the standard `io.Copy` package. Thus, transfer occurs through small buffers, maintaining constant memory consumption.
+* **Concurrency and Thread Safety:** The project leverages Goroutines to process messages from multiple users simultaneously. To prevent Race Conditions when accessing shared global resources, state is protected with `sync.Mutex` (for proxy lists) and `sync.RWMutex` (for the paginated link cache).
+* **Inter-Process Communication (OS Child Processes):** Converting video files (.mp4) to audio files (.mp3) is performed by delegating the operation to an external process on the host operating system (FFmpeg), instantiated via the `os/exec` package.
+* **Stateless UI:** Telegram menu pagination is accomplished without maintaining state on the server. Contextual information (search ID and page index) is serialized and encapsulated inside Callback button strings (`p|ID|Page`), ensuring zero memory consumption between user queries.
 
-## Cum se porneste proiectul
+## How to Run the Project
 
-Proiectul este containerizat complet folosind Docker, facand instalarea si pornirea extrem de simple.
+The project is fully containerized using Docker, making installation and execution straightforward.
 
-### 1. Cerinte preliminare
-Asigurati-va ca aveti instalate pe sistemul gazda urmatoarele utilitare:
+### 1. Prerequisites
+Ensure you have the following utilities installed on your host system:
 * Docker
 * Docker Compose
 
-### 2. Configurarea mediului
-In directorul radacina al proiectului, este necesar sa setati variabilele de mediu pentru bot. Puteti exporta aceste variabile in terminal sau sa creati configuratia necesara de mediu:
+### 2. Environment Configuration
+In the root directory of the project, set up the required environment variables for the bot. You can export these variables in your terminal or create the necessary environment file:
 
 ```bash
-export TELEGRAM_TOKEN="token-ul-primit-de-la-botfather"
-export WEBHOOK_URL="url-ul-serverului-expus-public"
+export TELEGRAM_TOKEN="token-received-from-botfather"
+export WEBHOOK_URL="publicly-exposed-server-url"
 ```
 
-### 3. Pornirea sistemului
-Deschideti terminalul in locatia unde se afla fisierul `docker-compose.yml` si rulati comanda de build si start. Aceasta comanda va porni baza de date, va rula scriptul de initializare a tabelelor si va porni toate microserviciile in retea, in regim de fundal:
+### 3. Starting the System
+Open a terminal in the location of your `docker-compose.yml` file and run the build and start command. This command will start the database, execute the table initialization script, and launch all microservices in the network in the background:
 
 ```bash
 docker compose up --build -d
 ```
 
-### 4. Oprirea sistemului
-Pentru a opri si a inlatura containerele si retelele create, rulati comanda:
+### 4. Stopping the System
+To stop and remove the created containers and networks, run:
 
 ```bash
 docker compose down
